@@ -1,269 +1,94 @@
 # Smart Robotic Car with LLM Interaction
 
-An end-to-end **embedded robotic car** project combining **speech interaction**, **perception**, **navigation**, and **LLM-based dialogue**.  
-Goal: say “Hey car, come here.” The car wakes, understands, **navigates toward you**, **avoids obstacles**, and **speaks back**.
+Say **"Hey car, come here."** — the sentence becomes an action, the action
+becomes a motion, and the car drives to you.
 
----
+This repository holds the parts of that loop that run **without hardware**: the
+intent parser, the navigation controllers, and a simulation that closes the
+loop, all in standard-library Python with a test for every behaviour claimed
+below. The hardware bridge, microphone and camera are listed under
+[Not built yet](#not-built-yet) — this README only claims what `pytest` proves.
 
-## 🚀 Highlights
+```console
+$ python -m apps.demo
+action: GOTO_USER
+arrived: True
+steps: 75
+pose: (1.13, -0.04, 0.52)
+closest clearance: 0.101 m
+```
 
-- Modular, hardware-agnostic architecture (Raspberry Pi 5 + Arduino/STM32 recommended)  
-- Offline-first (Vosk ASR, pyttsx3 TTS), upgradable to Whisper/Edge-TTS  
-- LLM intent parsing with **tool-calling** stubs for motion/navigation  
-- Clear separation of **dialogue**, **sensing**, **control**, **firmware**  
-- Works on macOS/Linux (simulation/mock), deployable on Raspberry Pi  
+## What runs today
 
----
+| Piece | Where | What it does |
+| --- | --- | --- |
+| Intent parser | `intent/parser.py` | Maps a spoken sentence to `GOTO_USER` / `STOP` / `MOVE` / `TURN` / `FOLLOW`; anything else becomes `SMALLTALK`, so unknown speech moves nothing. |
+| Kinematics | `sim/car.py` | Unicycle model (`x += v·cosθ·dt`, …) with speed and turn-rate limits and heading wrap. |
+| Range sensing | `sim/world.py` | Ray-marched distance to circular obstacles, capped at the sensor's range. |
+| Obstacle avoidance | `nav/avoid.py` | Three range readings → `(v, w)`: cruise when clear, slow and steer when close, turn in place when blocked. |
+| Go-to-user | `nav/go_to.py` | Heading controller plus speed ramp; "arrived" is a 8 cm tolerance, about the size of the car. |
+| Dialogue | `llm/echo_agent.py` | Returns `{reply, action, args}` so the base can act without re-parsing. |
+| HTTP API | `apps/api_server.py` | `POST /chat {text}` → the same shape (needs `fastapi`). |
 
-## 🧭 Feature Matrix & Roadmap
+```console
+$ python -m pytest          # 31 tests
+$ python -m apps.demo       # closed loop, exits non-zero if it collides
+```
 
-- [x] Local dialogue service (echo mock)  
-- [x] HTTP API for `/chat`  
-- [ ] ASR (Vosk offline → Whisper optional)  
-- [ ] TTS (pyttsx3 offline → edge-tts optional)  
-- [ ] Obstacle avoidance (ultrasonic/ToF + simple controller)  
-- [ ] Motion control (RPi → Arduino/STM32 serial bridge)  
-- [ ] Visual perception (USB/CSI camera + OpenCV)  
-- [ ] LLM intent parser (navigate/stop/follow/come-here)  
-- [ ] On-device deployment (RPi 5, systemd service)  
-- [ ] Calibration & logging (IMU, wheel odom, PID tuning)  
-- [ ] Web dashboard (status, video, teleop)  
-- [ ] CI (lint, unit tests), release packaging  
+The demo is a smoke test on purpose: it drives from the origin to `(1.2, 0)`
+with an obstacle parked at `(0.62, 0.10)`, and exits non-zero unless the car
+arrives **and** keeps positive clearance.
 
----
-
-## 📦 Repository Structure
-
-- **apps/** — Entry points (CLI, API, demos)  
-  - **api_server.py** — FastAPI server exposing `/chat`, etc.  
-  - **voice_loop.py** — Simple REPL demo (mock LLM)  
-- **llm/** — LLM adapters and intent parser  
-  - **echo_agent.py** — Echo mock (works offline)  
-  - **openai_agent.py** — (optional) Real LLM adapter  
-  - **intent_parser.py** — Rule-based or light classifier  
-- **speech/** — ASR/TTS modules  
-  - **asr_vosk.py** — Offline ASR  
-  - **asr_whisper.py** — (optional) Whisper  
-  - **tts_pyttsx3.py** — Offline TTS  
-  - **tts_edge.py** — (optional) Edge-TTS  
-- **perception/** — Sensors: camera, ultrasonic, IMU/ToF  
-  - **camera.py**  
-  - **ultrasonic.py**  
-  - **imu.py**  
-- **navigation/** — Control, planning, obstacle avoidance  
-  - **motion_stub.py** — Mock motion for laptops  
-  - **motion_serial.py** — RPi→MCU serial bridge  
-  - **avoid.py** — Simple obstacle avoidance  
-- **embedded/** — MCU firmware (Arduino/STM32)  
-  - **arduino/** — Motor, encoder, ultrasonic drivers  
-- **examples/** — Minimal runnable demos  
-  - **follow_me_sim.py**  
-- **tests/** — Unit tests  
-- **docs/** — Diagrams, wiring, BOM, deployment  
-  - **architecture.md**  
-  - **wiring.pdf**  
-  - **images/**  
-- **scripts/** — Utilities (install, run, service)  
-- **requirements.txt**  
-- **requirements-rpi.txt**  
-- **.env.example**  
-- **README.md**
-
-## 🧱 System Architecture
-
-**Layers**  
-1. **Speech** — ASR → text; TTS ← response  
-2. **LLM & Intent** — dialogue policy, intent extraction, tool-calling  
-3. **Perception** — ultrasonic/ToF/camera/IMU  
-4. **Navigation/Control** — motion commands, obstacle avoidance  
-5. **Embedded** — MCU firmware drives motors/sensors via serial  
-
-**Dataflow (MVP)**  
-Mic → ASR → text → LLM/Intent → actions → Motion/Perception → state → LLM → TTS → Speaker  
-
----
-
-## 🧰 Hardware (Suggested)
-
-- **Compute**: Raspberry Pi 5 (8GB) + 128GB microSD  
-- **MCU**: Arduino Uno R3 / Nano / STM32  
-- **Locomotion**: 2× DC motors + driver (L298N/TB6612FNG)  
-- **Sensors**: Ultrasonic HC-SR04 / ToF (VL53L0X/L1X), IMU (MPU-6050), Camera (USB or CSI)  
-- **Audio**: USB mic + speaker  
-- **Power**: 2S–3S Li-ion/LiPo + BMS + 5V buck  
-- **Safety**: Inline fuse, E-stop switch  
-
----
-
-## 🧑‍💻 Software Stack
-
-- **Python** 3.10+  
-- **FastAPI**, **Uvicorn**, **Vosk**, **pyttsx3**  
-- **OpenCV**, **pyserial**, **requests**  
-- **Arduino C/C++ firmware** for STM32/Arduino  
-- **OS**: macOS/Linux development, Raspberry Pi OS deployment  
-
----
-
-## ⚙️ Installation
-
-~~~bash
-git clone https://github.com/WJDdidi-1/Smart-Robotic-Car-with-LLM-Interaction.git
-cd Smart-Robotic-Car-with-LLM-Interaction
-python3 -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip wheel
-pip install -r requirements.txt
-~~~
-
-**Raspberry Pi Setup**
-
-~~~bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements-rpi.txt
-~~~
-
----
-
-## ▶️ Quick Start
-
-**Local Echo Demo**
-
-~~~bash
-python apps/voice_loop.py
-~~~
-
-**HTTP API Mode**
-
-~~~bash
-uvicorn apps.api_server:app --reload
-~~~
-
-**Test**
-
-~~~bash
-curl -X POST http://127.0.0.1:8000/chat \
-     -H "Content-Type: application/json" \
-     -d '{"text":"hello car"}'
-~~~
-
----
-
-## 🗣️ Speech (ASR/TTS) Setup
-
-**ASR (Vosk Offline Example)**  
-
-~~~python
-from vosk import Model, KaldiRecognizer
-import sounddevice as sd, json, queue
-
-def transcribe(duration=4, samplerate=16000):
-    q = queue.Queue()
-    def cb(indata, frames, time, status): q.put(bytes(indata))
-    model = Model("models/vosk-en")
-    rec = KaldiRecognizer(model, samplerate)
-    with sd.RawInputStream(samplerate=samplerate, blocksize=8000, dtype='int16', channels=1, callback=cb):
-        text = ""
-        for _ in range(int(duration * samplerate / 8000)):
-            data = q.get()
-            if rec.AcceptWaveform(data):
-                j = json.loads(rec.Result())
-                text += " " + j.get("text", "")
-        j = json.loads(rec.FinalResult())
-        text += " " + j.get("text","")
-        return text.strip()
-~~~
-
-**TTS (pyttsx3 Offline Example)**  
-
-~~~python
-import pyttsx3
-def speak(text):
-    engine = pyttsx3.init()
-    engine.say(text)
-    engine.runAndWait()
-~~~
-
----
-
-## 🤖 Intent Parser Example
-
-~~~python
-def parse_intent(text: str):
-    t = text.lower()
-    if "forward" in t or "ahead" in t:
-        return ("MOVE", {"v": 0.5})
-    if "back" in t:
-        return ("MOVE", {"v": -0.5})
-    if "left" in t:
-        return ("TURN", {"w": 0.6})
-    if "right" in t:
-        return ("TURN", {"w": -0.6})
-    if "stop" in t:
-        return ("STOP", {})
-    if "come here" in t or "approach" in t:
-        return ("GOTO_USER", {})
-    return ("SMALLTALK", {"text": text})
-~~~
-
----
-
-## 🧪 Testing
-
-~~~bash
-pytest -q
-~~~
-
----
-
-## 🖥️ Deployment (Raspberry Pi)
-
-~~~bash
-sudo systemctl daemon-reload
-sudo systemctl enable smartcar.service
-sudo systemctl start smartcar.service
-~~~
-
----
-
-## 🌐 HTTP API (MVP)
-
-POST `/chat`  
-
-Example:
-
-~~~bash
-curl -X POST http://127.0.0.1:8000/chat \
-     -H "Content-Type: application/json" \
-     -d '{"text":"come here"}'
-~~~
-
----
-
-## 🧩 Examples
-
-`examples/follow_me_sim.py` — simulate robot following a target point with proportional control.  
-
-~~~bash
-python examples/follow_me_sim.py
-~~~
-
----
-
-## 📜 License
-
-MIT License © 2025 Jiandi (Felix) Wang
-
----
-
-## 🧾 Citation
+## How the loop fits together
 
 ```
-@software{smart_robotic_car_llm,
-  title  = {Smart Robotic Car with LLM Interaction},
-  author = {Wang, Jiandi (Felix) and Contributors},
-  year   = {2025},
-  url    = {https://github.com/WJDdidi-1/Smart-Robotic-Car-with-LLM-Interaction}
-}
+sentence ──► intent/parser ──► action ──► nav/go_to ──┐
+                                            │          ├─► sim/car ─► pose
+                       sim/world (ranges) ──► nav/avoid ┘
 ```
+
+Every arrow is a function with a test. None of them need a network, a GPU or a
+robot, which is why the whole thing runs in CI on three operating systems.
+
+## Design decisions worth naming
+
+- **The parser is a rule table, not a model.** It is the contract an LLM
+  tool-call has to match; when the model is plugged in, the tests stay valid.
+- **Unknown text moves nothing.** `SMALLTALK` exists so a misunderstanding
+  cannot become motion.
+- **A dead-on obstacle picks a side.** With equal left and right readings the
+  proportional term is zero, and holding course would drive straight into the
+  obstacle — so a tie turns rather than cruises. There is a test for it.
+- **Simulation first.** The controllers were written against a simulated base
+  so their behaviour is reproducible and reviewable; the hardware bridge then
+  only has to move bytes.
+
+## Repository layout
+
+```
+apps/     demo (closed loop) and the FastAPI server
+intent/   sentence → action
+nav/      go_to and avoid controllers
+sim/      unicycle kinematics and ray-marched range sensing
+llm/      dialogue adapter
+tests/    31 tests: kinematics, sensing, control, intent, closed loop
+```
+
+## Not built yet
+
+Listed so nothing here reads as finished when it is not: offline ASR (Vosk),
+TTS (pyttsx3), a Raspberry Pi → Arduino serial bridge, a camera/OpenCV
+perception stage, on-device systemd deployment, and telemetry logging. The
+`docs/` and `speech/` folders an earlier version of this README promised do not
+exist.
+
+## Requirements
+
+Python 3.10+. Runtime code is standard library only; `pytest` is needed for the
+tests (`pip install -r requirements-dev.txt`) and `fastapi` + `uvicorn` only for
+the HTTP face.
+
+## License
+
+No license file, so the default applies: all rights reserved. Open an issue if
+you want a permissive license here.
