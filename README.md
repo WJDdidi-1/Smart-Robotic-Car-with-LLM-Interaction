@@ -18,6 +18,12 @@ pose: (1.13, -0.04, 0.52)
 closest clearance: 0.101 m
 ```
 
+![The demo loop: the car steers around one obstacle and stops inside the arrival tolerance](docs/demo-path.svg)
+
+The curve is the run above, not an illustration: `python -m scripts.draw_path`
+records the poses and writes `docs/demo-path.svg`, so a change to the controllers
+shows up as a different path.
+
 ## What runs today
 
 | Piece | Where | What it does |
